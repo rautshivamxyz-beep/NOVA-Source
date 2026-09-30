@@ -2,12 +2,14 @@
 
 This snapshot publishes the **text/source files** of NOVA v9.13.2 (source tree at
 head `b2af40b38706f624c823d85d9d0ec7efa49711c2`). Binary artifacts, backup/cruft
-files, and anything that failed the pre-push secret scan were intentionally
-left out. They are listed below so the snapshot is auditable.
+files, one oversized dataset file, and anything that failed the pre-push secret
+scan were intentionally left out. They are listed below so the snapshot is
+auditable.
 
-- Files published: **127**
+- Source files published: **126** (plus this `SOURCE-NOTES.md`)
 - Binary artifacts excluded: **8**
 - Cruft / backup files excluded: **42**
+- Oversized files excluded: **1**
 - Secret-scan skips: **0**
 
 ## Why binaries are excluded
@@ -81,6 +83,16 @@ root-level pasted debug logs — not part of the current source.
 | `nova_stuck_backup.py` | backup | 4.2 KB |
 | `nova_test.txt` | root-txt-dump | 0 B |
 | `rebuild.txt` | root-txt-dump | 29 B |
+
+## Excluded oversized files
+
+| Path | Size | Blob SHA | Reason |
+| --- | ---: | --- | --- |
+| `wiki/articles-v1.txt` | 6.8 MB | `9a8de46e8856e560bf97ca2425c56bdb39d14430` | exceeds the commit API payload limit (HTTP 413) |
+
+This large wiki dataset is a text file, but its size exceeds the commit API's
+request limit, so it could not be included in this automated snapshot. It can be
+added manually if desired.
 
 ## Secret-scan skips
 
