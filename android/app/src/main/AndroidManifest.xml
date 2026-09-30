@@ -1,0 +1,115 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.READ_CONTACTS" />
+    <uses-permission android:name="com.android.alarm.permission.SET_ALARM" />
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+
+    <application android:icon="@mipmap/ic_launcher"
+        android:extractNativeLibs="true"
+        android:theme="@style/AppTheme"
+        android:label="@string/app_name"
+        android:allowBackup="false"
+        android:supportsRtl="true">
+
+        <activity
+            android:name=".MainActivity"
+            android:exported="true"
+            android:launchMode="singleTask"
+            android:windowSoftInputMode="adjustResize">
+
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+
+            <intent-filter android:label="Share to NOVA">
+                <action android:name="android.intent.action.SEND" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="*/*" />
+            </intent-filter>
+
+        </activity>
+
+        <!-- v0.9.2 phase 3: NOVA's memory screen, reached from the
+             MainActivity drawer's "Memory" row - no launcher icon. -->
+        <activity
+            android:name=".MemoryActivity"
+            android:exported="false"
+            android:label="NOVA Memory" />
+
+        <activity
+            android:name=".ModelsActivity"
+            android:exported="false"
+            android:windowSoftInputMode="adjustResize" />
+
+        <activity android:name=".ChatsActivity" android:exported="false" />
+
+        <receiver android:name=".ReminderReceiver" android:exported="false" />
+
+        <!-- v9.8.0: fires the scheduled "text <name> at <time>" sends -->
+        <receiver android:name=".SendReceiver" android:exported="false" />
+
+        <!-- v5.4.2: re-arm reminders after a reboot -->
+        <receiver android:name=".BootReceiver" android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+            </intent-filter>
+        </receiver>
+
+        <activity android:name=".SettingsActivity" android:exported="false" />
+
+        <activity android:name=".KnowledgeActivity" android:exported="false" />
+
+        <activity android:name=".ExamsActivity" android:exported="false" />
+
+        <!-- v8.3.0: the study planner screen, from the drawer -->
+        <activity android:name=".PlannerActivity" android:exported="false" />
+        <activity android:name=".FetchLogActivity" android:exported="false" />
+
+        <!-- v8.7.0: save/restore NOVA's full local state, from the drawer -->
+        <activity android:name=".BackupActivity" android:exported="false" />
+
+        <!-- v9.7.0: the Update screen - releases page or an on-device
+             delta patch applied against the installed APK -->
+        <activity android:name=".UpdateActivity" android:exported="false" />
+
+        <service
+            android:name=".NotifBrain"
+            android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE"
+            android:exported="true"
+            android:label="NOVA notification access">
+            <intent-filter>
+                <action android:name="android.service.notification.NotificationListenerService" />
+            </intent-filter>
+        </service>
+
+        <!-- v8.8.0: the eyes - notifications logged locally for the
+             deterministic "what did I miss" / "messages from X" queries -->
+        <service
+            android:name=".NovaListener"
+            android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.service.notification.NotificationListenerService" />
+            </intent-filter>
+        </service>
+
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="org.nova.fileprovider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths" />
+        </provider>
+    </application>
+
+    <uses-sdk tools:overrideLibrary="com.arm.aichat" />
+
+</manifest>

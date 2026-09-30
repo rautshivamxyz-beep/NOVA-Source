@@ -1,0 +1,147 @@
+name: Build NOVA APK
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+concurrency:
+  group: nova-apk
+  cancel-in-progress: true
+permissions:
+  contents: write
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out NOVA (full history and tags for the version check)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+      - name: App source changes require a new versionName
+        run: |
+          VER="$(sed -n "s/.*versionName '\([^']*\)'.*/\1/p" android/app/build.gradle | head -1)"
+          if [ -z "$VER" ]; then echo "FATAL: could not read versionName"; exit 1; fi
+          if [ "${{ github.event_name }}" != "push" ]; then
+            echo "not a push - version $VER, check skipped"; exit 0
+          fi
+          BEFORE="${{ github.event.before }}"
+          if ! git cat-file -e "$BEFORE" 2>/dev/null; then
+            echo "no before commit - version $VER, check skipped"; exit 0
+          fi
+          if [ "$(git diff --name-only "$BEFORE" "$GITHUB_SHA" -- '*.kt' '*.java' | wc -l)" -eq 0 ]; then
+            echo "no app source change - version $VER may stay"
+            exit 0
+          fi
+          if git rev-parse -q --verify "refs/tags/v$VER" >/dev/null; then
+            echo "FATAL: app source changed but v$VER was already released with this versionName"
+            echo "bump versionName/versionCode in android/app/build.gradle"
+            exit 1
+          fi
+          echo "app source changed and version $VER is new - OK"
+      - name: Verify source integrity
+        run: python3 tmp/verify_patches.py .
+      - name: Bundle the on-device embedding model (v9.9.0 Semantic RAG)
+        run: |
+          # all-MiniLM-L6-v2 int8 ONNX + its BERT vocab, downloaded at build
+          # time (never committed) and pinned by sha256 - a mismatch is fatal.
+          mkdir -p android/app/src/main/assets
+          curl -fL -o android/app/src/main/assets/embedder.onnx \
+            "https://huggingface.co/Xenova/all-MiniLM-L6-v2/resolve/main/onnx/model_quantized.onnx"
+          echo "afdb6f1a0e45b715d0bb9b11772f032c399babd23bfc31fed1c170afc848bdb1  android/app/src/main/assets/embedder.onnx" | sha256sum -c -
+          curl -fL -o android/app/src/main/assets/embedder.vocab \
+            "https://huggingface.co/Xenova/all-MiniLM-L6-v2/resolve/main/vocab.txt"
+          echo "07eced375cec144d27c900241f3e339478dec958f92fddbc551f295c992038a3  android/app/src/main/assets/embedder.vocab" | sha256sum -c -
+          ls -lh android/app/src/main/assets
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - name: Install Android SDK packages
+        run: |
+          SDKMANAGER="${ANDROID_HOME:-/usr/local/lib/android/sdk}/cmdline-tools/latest/bin/sdkmanager"
+          yes | "$SDKMANAGER" --licenses > /dev/null || true
+          "$SDKMANAGER" "platforms;android-35" "build-tools;35.0.0" > /dev/null
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.11.1'
+      - name: Build the NOVA release APK for arm64
+        working-directory: android
+        env:
+          NOVA_KEYSTORE_PASSWORD: ${{ secrets.NOVA_KEYSTORE_PASSWORD }}
+        run: gradle assembleRelease --no-daemon --stacktrace
+      - name: Copy the arm64 APK to runner temp
+        run: |
+          mkdir -p "$RUNNER_TEMP/apk-arm64"
+          cp android/app/build/outputs/apk/release/app-release.apk "$RUNNER_TEMP/apk-arm64/app-release.apk"
+      - name: Check the APK signature against the v2 release key
+        run: |
+          BT="$(ls /usr/local/lib/android/sdk/build-tools/*/apksigner | sort -V | tail -1)"
+          "$BT" verify --print-certs "$RUNNER_TEMP/apk-arm64/app-release.apk" | tee apk-certs.txt
+          ACTUAL="$(grep -i 'sha-256 digest' apk-certs.txt | head -1 | sed 's/.*: *//' | tr -d ' :' | tr 'A-F' 'a-f')"
+          EXPECTED="012735e6cdcd06be57ccf6202e38acdb0dee8b331ac06664f9783b03544d73d6"
+          if [ "$ACTUAL" != "$EXPECTED" ]; then
+            echo "FATAL: APK is NOT signed with the v2 release key"
+            echo "  expected: $EXPECTED"
+            echo "  actual:   $ACTUAL"
+            exit 1
+          fi
+          echo "APK signature OK (v2 release key)"
+      - name: Build the NOVA universal APK (arm64 and x86_64)
+        working-directory: android
+        env:
+          NOVA_KEYSTORE_PASSWORD: ${{ secrets.NOVA_KEYSTORE_PASSWORD }}
+        run: gradle clean assembleRelease --no-daemon --stacktrace -PNOVA_ABIS=arm64-v8a,x86_64
+      - name: List the built APKs
+        run: ls -lh "$RUNNER_TEMP/apk-arm64/app-release.apk" android/app/build/outputs/apk/release/app-release.apk
+      - name: Upload NOVA APK (arm64)
+        continue-on-error: true   # artifact quota is full; publishing must not depend on it
+        uses: actions/upload-artifact@v4
+        with:
+          retention-days: 1
+          name: NOVA-APK
+          path: ${{ runner.temp }}/apk-arm64/app-release.apk
+      - name: Upload NOVA universal APK
+        continue-on-error: true   # artifact quota is full; publishing must not depend on it
+        uses: actions/upload-artifact@v4
+        with:
+          retention-days: 1
+          name: NOVA-APK-Universal
+          path: android/app/build/outputs/apk/release/app-release.apk
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          VER="$(sed -n "s/.*versionName '\([^']*\)'.*/\1/p" android/app/build.gradle | head -1)"
+          if [ -z "$VER" ]; then echo "FATAL: could not read versionName"; exit 1; fi
+          cp "$RUNNER_TEMP/apk-arm64/app-release.apk" "NOVA-v${VER}.apk"
+          if gh release view "v${VER}" > /dev/null 2>&1; then
+            echo "release v${VER} already exists - uploading assets only"
+            gh release upload "v${VER}" "NOVA-v${VER}.apk" --clobber
+          else
+            gh release create "v${VER}" "NOVA-v${VER}.apk" \
+              --title "NOVA v${VER}" \
+              --notes "Automatic release build of NOVA v${VER} (arm64)." \
+              --latest
+          fi
+      - name: Attach delta patch
+        continue-on-error: true   # delta is best-effort; the release build must not depend on it
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          VER="$(sed -n "s/.*versionName '\([^']*\)'.*/\1/p" android/app/build.gradle | head -1)"
+          if [ -z "$VER" ]; then echo "FATAL: could not read versionName"; exit 1; fi
+          PREV="$(gh release list --limit 8 --json tagName,isDraft --jq "[.[] | select(.isDraft == false) | .tagName] | map(select(. != \"v${VER}\")) | .[0] // empty")"
+          if [ -z "$PREV" ]; then
+            echo "no previous release found - skipping delta patch"
+            exit 0
+          fi
+          echo "building delta patch from $PREV to v${VER}"
+          gh release download "$PREV" --pattern '*.apk' --output old.apk
+          pip install bsdiff4
+          gh release download "v${VER}" --pattern '*.apk' --output new.apk
+          python -c "import bsdiff4; bsdiff4.file_diff('old.apk','new.apk','NOVA-delta-${PREV}-to-v${VER}.patch')"
+          gh release upload "v${VER}" "NOVA-delta-${PREV}-to-v${VER}.patch" --clobber
+          echo "delta patch attached: NOVA-delta-${PREV}-to-v${VER}.patch ($(du -m "NOVA-delta-${PREV}-to-v${VER}.patch" | cut -f1) MB)"
